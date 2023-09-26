@@ -24,13 +24,12 @@ data = @pipe df|>
             :volume => (v -> (v .- minimum(v)) ./ (maximum(v) .- minimum(v))) => :volz    
         )
 
+# Method 1: using 3d Array
 dropmissing!(data)
 # arrange so that y=f(lag(x,1))
 X = Array{Float32}(data[1:(end-1),:])
 Y = Array{Float32}(data[2:end,1])
 
-# Method 1: using 3d Array
-# 
 # transform data to Flux RNN format
 # reshape data to 3d array: (timestep,features,sequences/samples)
 Xₜ = reshape(permutedims(X),(1,2,:))
@@ -72,9 +71,7 @@ function mat2vvec(M)
     v = [Mₚ[i,:] for i = 1:size(Mₚ,1)]
     return v
 end
-xx = mat2vvec(xtrain)
 
-m.(xx)
 function eval_model(x)
     Flux.reset!(m)
     output = m.(mat2vvec(x))
@@ -123,6 +120,7 @@ t3 = scatter(x=x, y=yhatcum, mode="lines", name="prediction", opacity=0.7)
 t4 = scatter(x=x, y=ycum, mode="lines", name="actual", opacity=0.7)
 plot([t3,t4])
 
+# -----------------------------------------------------------
 
 # Method 2: using 2d Array
 # Ref: https://fluxml.ai/Flux.jl/stable/models/recurrence/
@@ -132,7 +130,6 @@ dropmissing!(data)
 X = Array{Float32}(data[1:(end-1),:])
 Y = Array{Float32}(data[2:end,1])
 # prepare data x,y for training model
-## 93 batches, 100 sequences, 2 features
 Xₜ = [X[i,:] for i = 1:size(X,1)]
 Yₜ = [Y[i,:] for i = 1:size(Y,1)]
 # function to split 2d array
@@ -145,6 +142,7 @@ end
 xtrain, xtest = split_2darray(Xₜ,4000)
 ytrain, ytest = split_2darray(Yₜ,4000)
 # function for slice vector in sequences
+## 100 batches, 20 sequences, 2 features
 function vec2sequence(v::Vector, seq_len::Int64)
     new_v = []
     for i = range(1,length(v),step=seq_len)
@@ -173,96 +171,72 @@ using Flux.Optimise: update!
 #using Base.Iterators
 using StatsBase
 
+# the model: this is just a guess for illustrative purposes
+# there may be better configurations
+Flux.reset!(m)
+#m = Chain(LSTM(3, 5), Dense(5, 3, tanh), Dense(3, 1))
+m = Chain(
+    LSTM(2, 3),
+    Dropout(0.5),
+    Dense(3, 1,σ)
+    )
+
+## 2.1 using train!()
+## loss2: loss function, second method
+using Base.Iterators
+xytrain = zip(xₜ,yₜ)
+function loss(x, y)
+    Flux.reset!(m)
+    sum(mse(m(xi), yi) for (xi, yi) in zip(x, y))
+end
+loss(xytrain) # error
+
+ps = Flux.params(m)
+opt= Adam(1e-3)
+for epoch = 1:20
+    @show epoch
+    Flux.reset!(m)
+    Flux.train!(loss, ps, xytrain, opt)
+end
+# work, but the resulting forecast is not make sense!
+
+## 2.2 using custom train
+# set up the training
 # the loss function for training
 function loss(x,y)
     Flux.reset!(m)
     #m(x[1]) # warm-up internal state
     sum(mse.([m(xi) for xi ∈ x], y))
 end
+loss(xtrain,ytrain)     # ok, test if loss function is working
 
-# function to get prediction of y conditional on lags of y.
-function predict(data)
-    Flux.reset!(m)
-    m(data[1]) # warm-up internal state
-    [m(d)[1] for d ∈ data] # output predictions as a vector
-end
-
-# function for checking out-of-sample fit
-function callback()
-    error=mean(abs2.([t[1] for t ∈ ytest] - predict(xtest)))
-    println("testing mse: ", error)
-    return error
-end
-
-# the model: this is just a guess for illustrative purposes
-# there may be better configurations
-Flux.reset!(m)
-#m = Chain(LSTM(3, 5), Dense(5, 3, tanh), Dense(3, 1))
-m = Chain(
-    LSTM(2, 10),
-    Dropout(0.5),
-    Dense(10, 1,σ)
-    )
-
-# set up the training
-ps = Flux.params(m)
+ps = params(m)
 opt= Adam(1e-3)
-for epoch = 1:20
+for epoch = 1:50
     @show epoch
-    for d in (xtrain,ytrain)
-      gs = gradient(ps) do
-        l = loss.(d...)
-      end
-      update!(opt, ps, gs)
+    gs = gradient(ps) do
+        loss(xytrain)  # change to trained data without sequence
     end
+    update!(opt, ps, gs)
 end
-
-
-# train while out-of-sample improves, saving best model.
-# stop when the out-of-sample has increased too many times   
-function trains(model, epochs::Int64) ## max number of training loops
-    bestmodel = model;
-    numincreases = 0;
-    maxnumincreases = Int64(0.1*epochs);
-    ps = Flux.params(model);
-    opt = ADAM();
-    e = [];
-    for i = 1:epochs
-        gs = gradient(ps) do
-            loss(xtrain,ytrain)  # change to trained data without sequence
-        end
-        Flux.update!(opt, ps, gs)
-        c = callback()
-        push!(e, c)
-        if isless(c,minimum(e))
-            bestmodel = deepcopy(model)
-        else
-            numincreases +=1
-        end    
-        numincreases > maxnumincreases ? break : nothing
-    end
-    model = bestmodel
-    return model,e
-end
-m,e = trains(m, 100)
-minimum(e)
+# resulting forecast does not make sense!
 
 # using test data, predict using optimized m
-pred_lstm = predict(xtest)
-y_actual = [i[1] for i in ytest]
-mean_se = mean(abs2.(y_actual .- pred_lstm)) # check if mse == minimum(e)
-cumrt_lstm = cumsum(pred_lstm)
-cumrt = cumsum(y_actual)
-x = 1:length(pred_lstm)
+yhat0 = [m(xtest[i]) for i = 1:length(xtest)]
+yhat = [yhat0[i][1] for i in 1:length(yhat0)]
+y_actual = [ytest[i][1] for i in 1:length(ytest)]
+yhat_cum = cumsum(yhat)
+y_cum = cumsum(y_actual)
+x = 1:length(yhat)
 
 # Plots
 using PlotlyJS
-t1 = scatter(x=x, y=pred_lstm, mode="lines", name="y prediction", opacity=0.5)
+t1 = scatter(x=x, y=yhat, mode="lines", name="y prediction", opacity=0.5)
 t2 = scatter(x=x, y=y_actual, mode="lines", name="y actual", opacity=0.5)
 plot([t1,t2])
 
 # plotting cumulative return
-t3 = scatter(x=x, y=cumrt_lstm, mode="lines", name="prediction", opacity=0.7)
-t4 = scatter(x=x, y=cumrt, mode="lines", name="actual", opacity=0.7)
+t3 = scatter(x=x, y=yhat_cum, mode="lines", name="prediction", opacity=0.7)
+t4 = scatter(x=x, y=y_cum, mode="lines", name="actual", opacity=0.7)
 plot([t3,t4])
 
