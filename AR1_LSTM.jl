@@ -1,5 +1,7 @@
-# All credits go to mcreel, see https://discourse.julialang.org/t/simple-flux-lstm-for-time-series/35494/42
-# https://gist.github.com/JLDC/4287637e00b8eaf0dcb9e7c5626edff8
+# The code is only a copy of below reference
+# see JLDC, see https://gist.github.com/JLDC/4287637e00b8eaf0dcb9e7c5626edff8
+# As said by JLDC, all credits go to mcreel, see https://discourse.julialang.org/t/simple-flux-lstm-for-time-series/35494/42
+
 
 using Flux, Plots, Statistics
 using Base.Iterators

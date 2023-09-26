@@ -26,7 +26,6 @@ data = @pipe df|>
         combine(_,
             :date => :date,
             :close => (y -> y./lags(y,1).-1) => :rt,
-            #[:low, :high] => ((l,h) -> h .- l) => :dayrange,
             :volume => (v -> (v .- minimum(v)) ./ (maximum(v) .- minimum(v))) => :volz    
         )
 
@@ -42,7 +41,7 @@ function gdftoarray(gdf, colindex::Int64)
     v = []
     for i in eachindex(gdf)
         m = Array{Float32}(gdf[i][!,colindex:end]) # drop date
-        push!(v, m')
+        push!(v, permutedims(m)) # use Base.permutedims for general data manipulations
     end
     return v
 end
@@ -52,7 +51,7 @@ function gdftoarray!(gdf, colindex::Int64)
     v = []
     for i in eachindex(gdf)
         m = Array{Float32}(gdf[i][!,colindex])
-        push!(v, m')
+        push!(v, permutedims(m))
     end
     return v
 end
